@@ -1,0 +1,9 @@
+[project]
+name = "BSAI-ComfyUI-TaoMate"
+description = "TaoMate-H3 (MiniMax H3 3-step distilled streaming) ComfyUI nodes: LoRA loader, 3-step timesteps/Euler sampler, continuation probe and one-click streaming chain for long audio-video generation."
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = ["torch", "torchaudio", "tqdm"]
+
+[project.urls]
+Repository = "https://github.com/TaoMateAI/TaoMate-H3"
