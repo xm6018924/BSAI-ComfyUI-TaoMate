@@ -29,6 +29,7 @@ BSAI-ComfyUI-TaoMate - nodes.py
 import math
 import os
 import struct
+import sys
 import json
 
 import torch
@@ -54,6 +55,28 @@ except Exception as _e:  # pragma: no cover
         "[BSAI TaoMate] 需要带原生 MiniMax-H3 支持的 ComfyUI "
         "(comfy_extras.nodes_minimax_h3 缺失，请先更新 ComfyUI)。"
     ) from _e
+
+# ---- BSAI 插件协同 SDK：加载即自动注册（失败不拖垮插件） ----
+_ORCH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "..", "BSAI-ComfyUI-Orchestrator")
+if not os.path.isdir(_ORCH):
+    _ORCH = r"G:\BSAI-ComfyUI-intel-XPU-GPU-NPU-aki\ComfyUI\custom_nodes\BSAI-ComfyUI-Orchestrator"
+if os.path.isdir(_ORCH) and _ORCH not in sys.path:
+    sys.path.insert(0, _ORCH)
+try:
+    from bsai_orch_client import BSAIOrch
+except Exception:
+    BSAIOrch = None
+
+try:
+    if BSAIOrch is not None:
+        BSAIOrch.register(
+            name="BSAI-TaoMate",
+            kind="sampling",                 # 能力类型：GPU1 视频采样
+            hardware=["cuda"],
+        )
+except Exception:
+    pass
 
 SHIFT_V, SHIFT_A = 12.0, 3.0   # MiniMax H3 视频/音频 flow shift
 
@@ -517,11 +540,25 @@ class BSAITaoMateStreamChain:
                 latent.get("downscale_ratio_spacial", None),
                 latent.get("downscale_ratio_temporal", None))
 
-            samples = guider.sample(
-                noise.generate_noise(latent), latent_image, sampler, sigmas,
-                denoise_mask=None, callback=None,
-                disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
-                seed=noise.seed)
+            # BSAI 协同：GPU1 采样期间持有租约（allocate 失败不改变原流程）
+            _s_alloc = None
+            try:
+                if BSAIOrch is not None:
+                    _s_alloc = BSAIOrch.allocate("sampling", requester="8191", watchdog=True)
+            except Exception:
+                _s_alloc = None
+            try:
+                samples = guider.sample(
+                    noise.generate_noise(latent), latent_image, sampler, sigmas,
+                    denoise_mask=None, callback=None,
+                    disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
+                    seed=noise.seed)
+            finally:
+                if _s_alloc is not None:
+                    try:
+                        _s_alloc.release()
+                    except Exception:
+                        pass
             samples = samples.to(comfy.model_management.intermediate_device())
 
             video_part, audio_part = samples.unbind()[0], samples.unbind()[-1]
